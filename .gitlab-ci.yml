@@ -1,0 +1,153 @@
+# F Prime LED Blinker CI/CD Pipeline
+# Builds ARM64 binary for Raspberry Pi deployment
+
+stages:
+  - prepare
+  - build
+  - package
+  - release
+
+variables:
+  BUILD_TYPE: "Release"
+  FPRIME_VERSION: "3.6.1"
+  TARGET_ARCH: "aarch64"
+  PROJECT_NAME: "led-blinker"
+  GPIO_PIN: "13"
+
+# Workflow rules - when to create pipelines
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG                # Always run on tags
+    - if: $CI_COMMIT_BRANCH             # Always run on branch pushes
+
+# Template for common setup
+.base_job: &base_job
+  image: ubuntu:22.04
+  before_script:
+    # Update system and install cross-compilation tools
+    - apt-get update -q -y
+    - apt-get install -y build-essential cmake git python3 python3-pip python3-venv
+    - apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+    - apt-get install -y file wget curl
+    # Setup F Prime environment
+    - python3 -m venv fprime-venv
+    - source fprime-venv/bin/activate
+    - pip install --upgrade pip
+    - pip install fprime-tools==$FPRIME_VERSION
+    - fprime-util --version
+
+# Stage 1: Validate F Prime project structure
+prepare:
+  stage: prepare
+  <<: *base_job
+  script:
+    - echo "=== F Prime Project Validation ==="
+    - source fprime-venv/bin/activate
+    - fprime-util info
+    - echo "✅ F Prime project structure validated"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Stage 2: Cross-compile for ARM64 (Raspberry Pi)
+build:
+  stage: build
+  <<: *base_job
+  script:
+    - echo "=== Cross-Compiling for Raspberry Pi (ARM64) ==="
+    - source fprime-venv/bin/activate
+    # Configure build with ARM64 toolchain
+    - cmake --preset fprime-rpi4-native
+    # Build the project
+    - cmake --build build-rpi4-native --config $BUILD_TYPE -j$(nproc)
+    # Verify the binary architecture
+    - file build-rpi4-native/LedBlinker/LedBlinker
+    - echo "✅ ARM64 binary compiled successfully"
+  artifacts:
+    paths:
+      - build-rpi4-native/LedBlinker/LedBlinker
+      - build-rpi4-native/LedBlinker/LedBlinkerPackets.xml
+      - build-rpi4-native/config/
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Stage 3: Create deployment package
+package:
+  stage: package
+  needs: ["build"]
+  <<: *base_job
+  script:
+    - echo "=== Creating Deployment Package ==="
+    - source fprime-venv/bin/activate
+    # Create packaging script and run it
+    - chmod +x ci/scripts/create_package.sh
+    - ./ci/scripts/create_package.sh "$CI_COMMIT_TAG" "$CI_COMMIT_SHA"
+    - echo "✅ Deployment package created"
+    # Show package contents
+    - ls -la dist/
+    - tar -tzf dist/*.tar.gz | head -20
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 month
+  rules:
+    - if: $CI_COMMIT_TAG                # Only package for releases
+    - if: $CI_COMMIT_BRANCH == "master" # And master branch (dev builds)
+
+# Stage 4: Create GitLab Release (only for tags)
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs: ["package"]
+  script:
+    - echo "Creating GitLab Release for $CI_COMMIT_TAG"
+  release:
+    name: "Release $CI_COMMIT_TAG"
+    tag_name: "$CI_COMMIT_TAG"
+    description: |
+      # F Prime LED Blinker Release $CI_COMMIT_TAG
+      
+      ## 🚀 Deployment Package
+      
+      Ready-to-deploy F Prime LED Blinker for Raspberry Pi 4/5.
+      
+      ## 📦 Installation
+      
+      ```bash
+      # Download and extract
+      wget $CI_PROJECT_URL/-/releases/$CI_COMMIT_TAG/downloads/led-blinker-$CI_COMMIT_TAG-rpi4.tar.gz
+      tar -xzf led-blinker-$CI_COMMIT_TAG-rpi4.tar.gz
+      cd led-blinker-$CI_COMMIT_TAG-rpi4/
+      
+      # Install on Raspberry Pi
+      sudo ./scripts/install.sh
+      
+      # Check service status
+      sudo systemctl status led-blinker
+      
+      # Connect with F Prime GDS
+      fprime-gds -n --ip <raspberry-pi-ip> --port 50050
+      ```
+      
+      ## 🔧 Configuration
+      - **GPIO Pin**: $GPIO_PIN
+      - **F Prime Version**: $FPRIME_VERSION
+      - **Target Architecture**: $TARGET_ARCH
+      
+      ## 📋 Package Contents
+      - ARM64 binary optimized for Cortex-A72
+      - Systemd service with security hardening
+      - One-command installation script
+      - F Prime dictionaries for GDS connection
+      
+      Built from commit: $CI_COMMIT_SHA
+    assets:
+      links:
+        - name: "Deploy Package (Raspberry Pi ARM64)"
+          url: "$CI_PROJECT_URL/-/jobs/$CI_JOB_ID/artifacts/file/dist/led-blinker-$CI_COMMIT_TAG-rpi4.tar.gz"
+        - name: "SHA256 Checksums"
+          url: "$CI_PROJECT_URL/-/jobs/$CI_JOB_ID/artifacts/file/dist/led-blinker-$CI_COMMIT_TAG-rpi4.sha256"
+  rules:
+    - if: $CI_COMMIT_TAG                # Only create releases for tags

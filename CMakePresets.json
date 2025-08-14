@@ -55,6 +55,24 @@
         "description": "F´ debug build including unit tests using ninja and local fprime-venv",
         "binaryDir": "${sourceDir}/build-fprime-automatic-native-ut",
         "generator": "Ninja"
+      },
+      {
+        "name": "fprime-rpi4-native",
+        "displayName": "F´ Raspberry Pi 4/5 Native Cross-Compile",
+        "description": "F´ release build for Raspberry Pi 4/5 (ARM64) using cross-compilation",
+        "binaryDir": "${sourceDir}/build-rpi4-native",
+        "toolchainFile": "${sourceDir}/cmake/rpi4-native-toolchain.cmake",
+        "environment": {
+          "VIRTUAL_ENV": "${fileDir}/fprime-venv",
+          "PATH": "$env{VIRTUAL_ENV}/bin:$penv{PATH}"
+        },
+        "cacheVariables": {
+          "CMAKE_BUILD_TYPE": "Release",
+          "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+          "FPRIME_ENABLE_AUTOCODER_UTS": "OFF",
+          "FPRIME_ENABLE_FRAMEWORK_UTS": "OFF",
+          "BUILD_TESTING": "OFF"
+        }
       }
     ]
 }
